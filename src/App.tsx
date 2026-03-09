@@ -92,7 +92,7 @@ async function requestApi<T>(path: string, init: RequestInit): Promise<T> {
   try {
     payload = raw ? (JSON.parse(raw) as ApiResponse<T>) : ({ code: -1, message: 'Empty response', data: null } as ApiResponse<T>)
   } catch {
-    throw new Error(`接口返回非 JSON（${response.status}）`)
+    throw new Error(`Non-JSON response received (${response.status})`)
   }
 
   if (!response.ok) {
@@ -102,7 +102,7 @@ async function requestApi<T>(path: string, init: RequestInit): Promise<T> {
     throw new Error(`[${payload.code}] ${payload.message}`)
   }
   if (payload.data === null) {
-    throw new Error('接口返回 data 为空')
+    throw new Error('API returned empty data')
   }
 
   return payload.data
@@ -157,6 +157,12 @@ function App() {
   const [highlightDoc, setHighlightDoc] = useState<HighlightResponse | null>(null)
   const [fileContentMap, setFileContentMap] = useState<Map<number, string>>(new Map())
   const [activeFileId, setActiveFileId] = useState<number | null>(null)
+  const historyCanvases = [
+    { id: 'chart-4', name: 'Chart4', date: '2026/2/26' },
+    { id: 'chart-3', name: 'Chart3', date: '2026/2/26' },
+    { id: 'chart-2', name: 'Chart2', date: '2026/2/26' },
+    { id: 'chart-1', name: 'Chart1', date: '2026/2/26' },
+  ]
 
   const handleAddClick = () => {
     fileInputRef.current?.click()
@@ -205,7 +211,7 @@ function App() {
       setFileContentMap((prev) => new Map(prev).set(fileId, data.content))
       setError('')
     } catch (e) {
-      console.warn('文件内容加载失败', e)
+      console.warn('Failed to load file content', e)
       setHighlightDoc(null)
     } finally {
       setHighlightLoading(false)
@@ -229,7 +235,7 @@ function App() {
         highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }, 100)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '文本高亮请求失败')
+      setError(e instanceof Error ? e.message : 'Failed to fetch highlighted text')
       setHighlightDoc(null)
     } finally {
       setHighlightLoading(false)
@@ -253,7 +259,7 @@ function App() {
         await handleFetchHighlight(list[0])
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '来源列表请求失败')
+      setError(e instanceof Error ? e.message : 'Failed to fetch source list')
     } finally {
       setSourceLoading(false)
     }
@@ -274,7 +280,7 @@ function App() {
       })
 
       if (!uploaded.fileIds?.length) {
-        throw new Error('上传成功但 fileIds 为空')
+        throw new Error('Upload succeeded but fileIds is empty')
       }
 
       const generated = await requestApi<GraphGenerateResponse>('/api/graph/generate', {
@@ -297,7 +303,7 @@ function App() {
         void handleLoadFileContent(uploaded.files[0].fileId)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '图谱生成失败')
+      setError(e instanceof Error ? e.message : 'Failed to generate graph')
     } finally {
       setIsSubmitting(false)
     }
@@ -308,7 +314,7 @@ function App() {
 
     const categories = Array.from(new Set(graphData.nodes.map((n) => n.type))).map((type) => ({ name: type }))
     const typeToColor = new Map(
-      categories.map((c, index) => [c.name, ['#e8f2ff', '#eaf7ee', '#fff4e8', '#f2ecff'][index % 4]])
+      categories.map((c, index) => [c.name, ['#e8f4ff', '#eaf7ee', '#fff4e8', '#eef2ff'][index % 4]])
     )
 
     const nodeData = graphData.nodes.map((node) => ({
@@ -318,8 +324,8 @@ function App() {
       category: categories.findIndex((c) => c.name === node.type),
       symbolSize: node.conflict ? 56 : 50,
       itemStyle: {
-        color: node.conflict ? '#fff1f0' : typeToColor.get(node.type) || '#e8f2ff',
-        borderColor: node.conflict ? '#cf1322' : '#5b8ff9',
+        color: node.conflict ? '#fff1f0' : typeToColor.get(node.type) || '#e8f4ff',
+        borderColor: node.conflict ? '#cf1322' : '#168cff',
         borderWidth: node.conflict ? 2.4 : 1.2,
       },
       label: {
@@ -360,8 +366,8 @@ function App() {
         trigger: 'item',
         formatter: (params: unknown) => {
           const p = params as { dataType?: string; data?: { name?: string; value?: string; id?: string } }
-          if (p.dataType === 'edge') return p.data?.name || '关系'
-          if (p.dataType === 'node') return `${p.data?.name || ''}<br/>类型：${p.data?.value || '-'}`
+          if (p.dataType === 'edge') return p.data?.name || 'Relation'
+          if (p.dataType === 'node') return `${p.data?.name || ''}<br/>Type: ${p.data?.value || '-'}`
           return ''
         },
       },
@@ -407,7 +413,7 @@ function App() {
       if (params.dataType === 'node' && params.data?.id) {
         const id = Number(params.data.id)
         if (!Number.isNaN(id)) {
-          void handleFetchSources('ENTITY', id, `实体：${params.data.name || id}`)
+          void handleFetchSources('ENTITY', id, `Entity: ${params.data.name || id}`)
         }
       }
 
@@ -415,7 +421,7 @@ function App() {
         const id = Number(params.data.id)
         const edge = graphData.edges.find((item) => item.id === id)
         if (!Number.isNaN(id)) {
-          const label = edge ? `关系：${edge.relation}${edge.ratio ? ` ${edge.ratio}` : ''}` : `关系 ID：${id}`
+          const label = edge ? `Relation: ${edge.relation}${edge.ratio ? ` ${edge.ratio}` : ''}` : `Relation ID: ${id}`
           void handleFetchSources('RELATION', id, label)
         }
       }
@@ -424,7 +430,9 @@ function App() {
 
   const renderHighlightedContent = () => {
     if (!highlightDoc) {
-      return highlightLoading ? '加载中...' : '请选择左侧图谱节点/关系，或点击上方文件标签查看全文。'
+      return highlightLoading
+        ? 'Loading...'
+        : 'Select a graph node/relation on the left, or click a file tab above to view full content.'
     }
 
     const { content, highlightRanges } = highlightDoc
@@ -475,75 +483,99 @@ function App() {
   if (view === 'result' && graphData) {
     return (
       <div className="result-view-container">
-        <div className="chart-panel">
-          <div className="panel-header">
-            <h1 className="brand-title">Evidence Link</h1>
-            <span className="graph-meta">Graph #{graphData.graphId}</span>
-            <button className="back-link" onClick={() => setView('upload')}>
-              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6 13L1 7M1 7L6 1M1 7H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <div className="result-top-nav">
+          <div className="result-nav-brand">Evidence Link</div>
+          <div className="history-canvas-nav">
+            {historyCanvases.map((canvas) => (
+              <div className="history-canvas-item" key={canvas.id}>
+                <div className="canvas-item-head">
+                  <span className="canvas-star">✦</span>
+                  <span className="canvas-name">{canvas.name}</span>
+                  <span className="canvas-date">{canvas.date}</span>
+                </div>
+                <div className="canvas-actions">
+                  <button type="button" className="canvas-action-btn">Edit</button>
+                  <button type="button" className="canvas-action-btn">Copy</button>
+                  <button type="button" className="canvas-action-btn">Delete</button>
+                </div>
+              </div>
+            ))}
+            <button className="canvas-add-btn" type="button" aria-label="Add history canvas">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 1V13M1 7H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Upload
             </button>
           </div>
-          <div className="chart-content" style={{ padding: 0, overflow: 'hidden' }}>
-            <ReactECharts option={chartOptions} onEvents={chartEvents} style={{ height: '100%', width: '100%' }} />
-          </div>
-          <div className="conflict-panel">
-            <div className="conflict-title">冲突列表</div>
-            {graphData.conflicts.length === 0 && <div className="conflict-empty">当前图谱没有冲突项</div>}
-            {graphData.conflicts.map((conflict) => (
-              <button
-                key={conflict.id}
-                className="conflict-item"
-                onClick={() => void handleFetchSources('CONFLICT', conflict.id, `冲突：${conflict.description}`)}
-              >
-                <span className="conflict-type">{conflict.type}</span>
-                <span>{conflict.description}</span>
-              </button>
-            ))}
-          </div>
+          <button className="back-link nav-back-link" onClick={() => setView('upload')} aria-label="Back to upload">
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 13L1 7M1 7L6 1M1 7H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </div>
-        <div className="doc-panel">
-          <div className="panel-header doc-header">
-            <div className="doc-target">
-              <div className="doc-target-title">当前来源目标</div>
-              <div className="doc-target-value">{selectedTargetLabel || '未选择'}</div>
+        <div className="result-main">
+          <div className="chart-panel">
+            <div className="panel-header chart-header">
+              <span className="graph-meta">Graph #{graphData.graphId}</span>
             </div>
-            <div className="source-count">{sourceLoading ? '加载来源中...' : `${sources.length} 条来源`}</div>
+            <div className="chart-content" style={{ padding: 0, overflow: 'hidden' }}>
+              <ReactECharts option={chartOptions} onEvents={chartEvents} style={{ height: '100%', width: '100%' }} />
+            </div>
+            <div className="conflict-panel">
+              <div className="conflict-title">Conflict Detected</div>
+              {graphData.conflicts.length === 0 && <div className="conflict-empty">There are no conflicts detected.</div>}
+              {graphData.conflicts.map((conflict) => (
+                <button
+                  key={conflict.id}
+                  className="conflict-item"
+                  onClick={() => void handleFetchSources('CONFLICT', conflict.id, `Conflict: ${conflict.description}`)}
+                >
+                  <span className="conflict-type">{conflict.type}</span>
+                  <span>{conflict.description}</span>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="source-toolbar">
-            {sources.length > 0
-              ? sources.map((source) => {
-                  const key = `${source.fileId}-${source.snippet}`
-                  return (
-                    <button
-                      key={key}
-                      className={`source-pill ${selectedSourceKey === key ? 'active' : ''}`}
-                      onClick={() => void handleFetchHighlight(source)}
-                    >
-                      {source.fileName}
-                    </button>
-                  )
-                })
-              : uploadedFiles.map((uf) => (
-                  <button
-                    key={uf.fileId}
-                    className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
-                    onClick={() => void handleLoadFileContent(uf.fileId)}
-                  >
-                    {uf.fileName}
-                  </button>
-                ))}
-          </div>
-          <div className="doc-content-wrapper">
-            <div className="doc-paper">
-              <h2 className="doc-title">{highlightDoc?.fileName || '文档预览'}</h2>
-              <div className="doc-meta">
-                {highlightLoading && <span>文本加载中...</span>}
+          <div className="doc-panel">
+            <div className="panel-header doc-header">
+              <div className="doc-target">
+                <div className="doc-target-title">Current Source Target</div>
+                <div className="doc-target-value">{selectedTargetLabel || 'Not selected'}</div>
               </div>
-              <div className="doc-body">
-                <p>{renderHighlightedContent()}</p>
+              <div className="source-count">{sourceLoading ? 'Loading sources...' : `${sources.length} source(s)`}</div>
+            </div>
+            <div className="source-toolbar">
+              {sources.length > 0
+                ? sources.map((source) => {
+                    const key = `${source.fileId}-${source.snippet}`
+                    return (
+                      <button
+                        key={key}
+                        className={`source-pill ${selectedSourceKey === key ? 'active' : ''}`}
+                        onClick={() => void handleFetchHighlight(source)}
+                      >
+                        {source.fileName}
+                      </button>
+                    )
+                  })
+                : uploadedFiles.map((uf) => (
+                    <button
+                      key={uf.fileId}
+                      className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
+                      onClick={() => void handleLoadFileContent(uf.fileId)}
+                    >
+                      {uf.fileName}
+                    </button>
+                  ))}
+            </div>
+            <div className="doc-content-wrapper">
+              <div className="doc-paper">
+                <h2 className="doc-title">{highlightDoc?.fileName || 'Document Preview'}</h2>
+                <div className="doc-meta">
+                  {highlightLoading && <span>Loading text...</span>}
+                </div>
+                <div className="doc-body">
+                  <p>{renderHighlightedContent()}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -635,8 +667,8 @@ function App() {
 function SparkleIcon() {
   return (
     <svg className="sparkle-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M7.99992 1.33331L8.94966 5.86178L13.3333 6.66665L8.94966 7.47151L7.99992 12L7.05018 7.47151L2.6665 6.66665L7.05018 5.86178L7.99992 1.33331Z" fill="#a044ff" />
-      <path d="M12.6666 10.6666L13.1414 12.9309L15.3333 13.3333L13.1414 13.7357L12.6666 16L12.1917 13.7357L9.99984 13.3333L12.1917 12.9309L12.6666 10.6666Z" fill="#a044ff" />
+      <path d="M7.99992 1.33331L8.94966 5.86178L13.3333 6.66665L8.94966 7.47151L7.99992 12L7.05018 7.47151L2.6665 6.66665L7.05018 5.86178L7.99992 1.33331Z" fill="#168CFF" />
+      <path d="M12.6666 10.6666L13.1414 12.9309L15.3333 13.3333L13.1414 13.7357L12.6666 16L12.1917 13.7357L9.99984 13.3333L12.1917 12.9309L12.6666 10.6666Z" fill="#168CFF" />
     </svg>
   )
 }
