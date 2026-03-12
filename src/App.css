@@ -540,13 +540,6 @@
   color: #6b7280;
 }
 
-.summary-panel {
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border-color);
-  background: #fcfdff;
-}
-
-.summary-title,
 .toolbar-title {
   font-size: 12px;
   font-weight: 600;
@@ -554,16 +547,97 @@
   margin-bottom: 8px;
 }
 
-.summary-content {
-  font-size: 13px;
-  color: #344054;
-  line-height: 1.7;
-}
-
 .toolbar-section {
   border-bottom: 1px solid var(--border-color);
   background: #ffffff;
   padding-top: 10px;
+}
+
+.evidence-badge {
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  width: 296px;
+  min-height: 248px;
+  padding: 18px 20px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 4px solid #168cff;
+  box-shadow: 0 22px 50px rgba(22, 140, 255, 0.16);
+  backdrop-filter: blur(6px);
+  z-index: 3;
+}
+
+.evidence-badge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+
+.evidence-badge-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.evidence-badge-close {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: #111827;
+  cursor: pointer;
+  padding: 0;
+}
+
+.evidence-badge-copy {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #111827;
+  margin-bottom: 16px;
+}
+
+.evidence-badge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.badge-source-row,
+.badge-loading-bar {
+  border-radius: 8px;
+  background: #b8cdf7;
+  min-height: 28px;
+}
+
+.badge-source-row {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: #254270;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-source-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge-loading-bar {
+  width: 56%;
+}
+
+.badge-loading-bar.wide,
+.badge-source-row:nth-child(even) {
+  width: 100%;
+}
+
+.badge-more-row {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
 }
 
 .source-toolbar {
@@ -706,5 +780,11 @@
 
   .chart-panel {
     border-bottom: 1px solid var(--border-color);
+  }
+
+  .evidence-badge {
+    right: 16px;
+    bottom: 16px;
+    width: min(296px, calc(100% - 32px));
   }
 }

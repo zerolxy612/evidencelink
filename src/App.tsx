@@ -241,6 +241,7 @@ function App() {
   const [selectedTargetLabel, setSelectedTargetLabel] = useState('')
   const [summaryText, setSummaryText] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [isEvidenceBadgeVisible, setIsEvidenceBadgeVisible] = useState(false)
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
   const [sources, setSources] = useState<SourceItem[]>([])
   const [highlightDoc, setHighlightDoc] = useState<HighlightResponse | null>(null)
@@ -337,6 +338,7 @@ function App() {
     setSourceLoading(true)
     setSummaryLoading(true)
     setSummaryText('')
+    setIsEvidenceBadgeVisible(true)
     setSources([])
     setActiveFileId(null)
     setSelectedSourceKey('')
@@ -411,6 +413,7 @@ function App() {
       setSources([])
       setSelectedTargetLabel('')
       setSummaryText('')
+      setIsEvidenceBadgeVisible(false)
       setSelectedSourceKey('')
       setHighlightDoc(null)
       setFileContentMap(new Map())
@@ -524,6 +527,12 @@ function App() {
     }
   }, [graphData]) as EChartsOption
 
+  const evidenceSourceFiles = useMemo(
+    () => Array.from(new Map(sources.map((source) => [source.fileId, source.fileName])).entries())
+      .map(([fileId, fileName]) => ({ fileId, fileName })),
+    [sources]
+  )
+
   const chartEvents = {
     click: (params: { dataType?: string; data?: { id?: string; name?: string; value?: string } }) => {
       if (!graphData || !params.dataType) return
@@ -598,6 +607,33 @@ function App() {
     return fragments
   };
 
+  const renderEvidenceBadgeRows = () => {
+    if (summaryLoading) {
+      return Array.from({ length: 4 }).map((_, index) => (
+        <div
+          key={`loading-${index}`}
+          className={`badge-loading-bar ${index % 2 === 1 ? 'wide' : ''}`}
+        />
+      ))
+    }
+
+    const visibleFiles = evidenceSourceFiles.slice(0, 4)
+    if (visibleFiles.length === 0) return null
+
+    return (
+      <>
+        {visibleFiles.map((item) => (
+          <div key={item.fileId} className="badge-source-row" title={item.fileName}>
+            <span>{item.fileName}</span>
+          </div>
+        ))}
+        {evidenceSourceFiles.length > visibleFiles.length && (
+          <div className="badge-more-row">+{evidenceSourceFiles.length - visibleFiles.length} more</div>
+        )}
+      </>
+    )
+  }
+
   if (view === 'result' && graphData) {
     return (
       <div className="result-view-container">
@@ -637,6 +673,29 @@ function App() {
             </div>
             <div className="chart-content" style={{ padding: 0, overflow: 'hidden' }}>
               <ReactECharts option={chartOptions} onEvents={chartEvents} style={{ height: '100%', width: '100%' }} />
+              {isEvidenceBadgeVisible && selectedTargetLabel && (
+                <div className="evidence-badge">
+                  <div className="evidence-badge-header">
+                    <div className="evidence-badge-title">Evidence badge</div>
+                    <button
+                      type="button"
+                      className="evidence-badge-close"
+                      aria-label="Close evidence badge"
+                      onClick={() => setIsEvidenceBadgeVisible(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="evidence-badge-copy">
+                    {summaryLoading
+                      ? 'Loading evidence summary...'
+                      : summaryText || 'No evidence summary available.'}
+                  </div>
+                  <div className="evidence-badge-list">
+                    {renderEvidenceBadgeRows()}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="conflict-panel">
               <div className="conflict-title">Conflict Detected</div>
@@ -660,16 +719,6 @@ function App() {
                 <div className="doc-target-value">{selectedTargetLabel || 'Not selected'}</div>
               </div>
               <div className="source-count">{sourceLoading ? 'Loading sources...' : `${sources.length} source(s)`}</div>
-            </div>
-            <div className="summary-panel">
-              <div className="summary-title">Summary</div>
-              <div className="summary-content">
-                {summaryLoading
-                  ? 'Loading summary...'
-                  : selectedTargetLabel
-                    ? summaryText || '暂无摘要'
-                    : 'Click a node, edge, or conflict to view summary.'}
-              </div>
             </div>
             <div className="toolbar-section">
               <div className="toolbar-title">Sources</div>
