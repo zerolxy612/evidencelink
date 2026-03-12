@@ -76,6 +76,7 @@ interface HighlightResponse {
 }
 
 type TargetType = 'ENTITY' | 'RELATION' | 'CONFLICT'
+type UnknownRecord = Record<string, unknown>
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -108,6 +109,37 @@ async function requestApi<T>(path: string, init: RequestInit): Promise<T> {
   return payload.data
 }
 
+async function requestFlexibleApi(path: string, init: RequestInit): Promise<unknown> {
+  const response = await fetch(toApiUrl(path), init)
+  const raw = await response.text()
+
+  let parsed: unknown = raw
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      parsed = raw
+    }
+  }
+
+  if (!response.ok) {
+    if (parsed && typeof parsed === 'object' && 'message' in parsed) {
+      throw new Error(String((parsed as UnknownRecord).message))
+    }
+    throw new Error(`HTTP ${response.status}`)
+  }
+
+  if (parsed && typeof parsed === 'object' && 'code' in parsed) {
+    const payload = parsed as ApiResponse<unknown>
+    if (payload.code !== 0) {
+      throw new Error(`[${payload.code}] ${payload.message}`)
+    }
+    return payload.data
+  }
+
+  return parsed
+}
+
 function normalizeSources(payload: unknown): SourceItem[] {
   if (Array.isArray(payload)) return payload as SourceItem[]
   if (!payload || typeof payload !== 'object') return []
@@ -116,6 +148,61 @@ function normalizeSources(payload: unknown): SourceItem[] {
   if (Array.isArray(data)) return data as SourceItem[]
 
   return []
+}
+
+function getNestedValue(payload: unknown, keys: string[]): unknown {
+  if (!payload || typeof payload !== 'object') return undefined
+
+  const record = payload as UnknownRecord
+  for (const key of keys) {
+    const value = record[key]
+    if (value !== undefined && value !== null) return value
+  }
+
+  if ('data' in record) {
+    return getNestedValue(record.data, keys)
+  }
+
+  return undefined
+}
+
+function normalizeSummary(payload: unknown, fallbackCount = 0): string {
+  if (typeof payload === 'string') {
+    const summary = payload.trim()
+    return summary || `共 ${fallbackCount} 个来源文件`
+  }
+
+  if (typeof payload === 'number') {
+    return `共 ${payload} 个来源文件`
+  }
+
+  const textValue = getNestedValue(payload, ['summary', 'content', 'text', 'description', 'message'])
+  if (typeof textValue === 'string' && textValue.trim()) {
+    return textValue.trim()
+  }
+
+  const countValue = getNestedValue(payload, ['sourceFileCount', 'fileCount', 'count', 'total'])
+  if (typeof countValue === 'number') {
+    return `共 ${countValue} 个来源文件`
+  }
+
+  return `共 ${fallbackCount} 个来源文件`
+}
+
+function normalizeFileContent(payload: unknown, fileId: number, fallbackName: string): HighlightResponse {
+  if (typeof payload === 'string') {
+    return { fileId, fileName: fallbackName, content: payload }
+  }
+
+  const content = getNestedValue(payload, ['content', 'text', 'body'])
+  const fileName = getNestedValue(payload, ['fileName', 'name'])
+  const resolvedFileId = getNestedValue(payload, ['fileId', 'id'])
+
+  return {
+    fileId: typeof resolvedFileId === 'number' ? resolvedFileId : fileId,
+    fileName: typeof fileName === 'string' && fileName.trim() ? fileName : fallbackName,
+    content: typeof content === 'string' ? content : '',
+  }
 }
 
 function getFileType(file: File): UploadedFile['type'] {
@@ -152,6 +239,8 @@ function App() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileMeta[]>([])
   const [graphData, setGraphData] = useState<GraphGenerateResponse | null>(null)
   const [selectedTargetLabel, setSelectedTargetLabel] = useState('')
+  const [summaryText, setSummaryText] = useState('')
+  const [summaryLoading, setSummaryLoading] = useState(false)
   const [selectedSourceKey, setSelectedSourceKey] = useState('')
   const [sources, setSources] = useState<SourceItem[]>([])
   const [highlightDoc, setHighlightDoc] = useState<HighlightResponse | null>(null)
@@ -190,6 +279,7 @@ function App() {
 
   const handleLoadFileContent = async (fileId: number) => {
     setActiveFileId(fileId)
+    setSelectedSourceKey('')
     // If already cached, show immediately
     const cached = fileContentMap.get(fileId)
     if (cached !== undefined) {
@@ -201,17 +291,17 @@ function App() {
     setHighlightLoading(true)
     setHighlightDoc(null)
     try {
-      const data = await requestApi<HighlightResponse>('/api/highlight', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId, snippet: '' }),
+      const meta = uploadedFiles.find((f) => f.fileId === fileId)
+      const data = await requestFlexibleApi(`/api/files/content?fileId=${fileId}`, {
+        method: 'GET',
       })
-      setHighlightDoc(data)
+      const document = normalizeFileContent(data, fileId, meta?.fileName || '')
+      setHighlightDoc(document)
       // Cache the content
-      setFileContentMap((prev) => new Map(prev).set(fileId, data.content))
+      setFileContentMap((prev) => new Map(prev).set(fileId, document.content))
       setError('')
     } catch (e) {
-      console.warn('Failed to load file content', e)
+      setError(e instanceof Error ? e.message : 'Failed to load file content')
       setHighlightDoc(null)
     } finally {
       setHighlightLoading(false)
@@ -245,23 +335,50 @@ function App() {
   const handleFetchSources = async (targetType: TargetType, targetId: number, label: string) => {
     setSelectedTargetLabel(label)
     setSourceLoading(true)
+    setSummaryLoading(true)
+    setSummaryText('')
     setSources([])
+    setActiveFileId(null)
     setSelectedSourceKey('')
     setHighlightDoc(null)
 
+    const query = new URLSearchParams({ targetType, targetId: String(targetId) }).toString()
+
     try {
-      const query = new URLSearchParams({ targetType, targetId: String(targetId) }).toString()
-      const data = await requestApi<unknown>(`/api/source?${query}`, { method: 'GET' })
-      const list = normalizeSources(data)
-      setSources(list)
+      const [sourcesResult, summaryResult] = await Promise.allSettled([
+        requestApi<unknown>(`/api/source?${query}`, { method: 'GET' }),
+        requestFlexibleApi('/api/evidence/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetType, targetId }),
+        }),
+      ])
+
+      let list: SourceItem[] = []
+      if (sourcesResult.status === 'fulfilled') {
+        list = normalizeSources(sourcesResult.value)
+        setSources(list)
+      } else {
+        throw sourcesResult.reason
+      }
+
+      const sourceFileCount = new Set(list.map((item) => item.fileId)).size
+      if (summaryResult.status === 'fulfilled') {
+        setSummaryText(normalizeSummary(summaryResult.value, sourceFileCount))
+      } else {
+        setSummaryText(`共 ${sourceFileCount} 个来源文件`)
+      }
+
       setError('')
       if (list.length > 0) {
         await handleFetchHighlight(list[0])
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch source list')
+      setSummaryText('')
     } finally {
       setSourceLoading(false)
+      setSummaryLoading(false)
     }
   }
 
@@ -293,6 +410,7 @@ function App() {
       setGraphData(generated)
       setSources([])
       setSelectedTargetLabel('')
+      setSummaryText('')
       setSelectedSourceKey('')
       setHighlightDoc(null)
       setFileContentMap(new Map())
@@ -543,29 +661,48 @@ function App() {
               </div>
               <div className="source-count">{sourceLoading ? 'Loading sources...' : `${sources.length} source(s)`}</div>
             </div>
-            <div className="source-toolbar">
-              {sources.length > 0
-                ? sources.map((source) => {
-                    const key = `${source.fileId}-${source.snippet}`
-                    return (
-                      <button
-                        key={key}
-                        className={`source-pill ${selectedSourceKey === key ? 'active' : ''}`}
-                        onClick={() => void handleFetchHighlight(source)}
-                      >
-                        {source.fileName}
-                      </button>
-                    )
-                  })
-                : uploadedFiles.map((uf) => (
-                    <button
-                      key={uf.fileId}
-                      className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
-                      onClick={() => void handleLoadFileContent(uf.fileId)}
-                    >
-                      {uf.fileName}
-                    </button>
-                  ))}
+            <div className="summary-panel">
+              <div className="summary-title">Summary</div>
+              <div className="summary-content">
+                {summaryLoading
+                  ? 'Loading summary...'
+                  : selectedTargetLabel
+                    ? summaryText || '暂无摘要'
+                    : 'Click a node, edge, or conflict to view summary.'}
+              </div>
+            </div>
+            <div className="toolbar-section">
+              <div className="toolbar-title">Sources</div>
+              <div className="source-toolbar">
+                {sources.length > 0
+                  ? sources.map((source) => {
+                      const key = `${source.fileId}-${source.snippet}`
+                      return (
+                        <button
+                          key={key}
+                          className={`source-pill ${selectedSourceKey === key ? 'active' : ''}`}
+                          onClick={() => void handleFetchHighlight(source)}
+                        >
+                          {source.fileName}
+                        </button>
+                      )
+                    })
+                  : <span className="source-empty">No source snippets</span>}
+              </div>
+            </div>
+            <div className="toolbar-section">
+              <div className="toolbar-title">Files</div>
+              <div className="source-toolbar">
+                {uploadedFiles.map((uf) => (
+                  <button
+                    key={uf.fileId}
+                    className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
+                    onClick={() => void handleLoadFileContent(uf.fileId)}
+                  >
+                    {uf.fileName}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="doc-content-wrapper">
               <div className="doc-paper">
