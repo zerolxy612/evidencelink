@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type { EChartsOption } from 'echarts'
 import ReactECharts from 'echarts-for-react'
 import './App.css'
@@ -48,6 +48,12 @@ interface GraphConflict {
   id: number
   type: string
   description: string
+}
+
+interface ConflictPreview {
+  sources: SourceItem[]
+  loading: boolean
+  error?: string
 }
 
 interface GraphGenerateResponse {
@@ -227,12 +233,27 @@ function truncateName(name: string, max = 12) {
   return `${base}…${ext}`
 }
 
+function formatConflictType(type: string) {
+  return type
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function getConflictSubtitle(conflict: GraphConflict, sources: SourceItem[]) {
+  const fileNames = Array.from(new Set(sources.map((source) => source.fileName).filter(Boolean)))
+  const sourceLabel = fileNames.length > 0 ? `Sources: ${fileNames.join(' / ')}` : 'Sources unavailable'
+  return `${formatConflictType(conflict.type)} · ${sourceLabel}`
+}
+
+
 function App() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const chartPanelRef = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<'upload' | 'result'>('upload')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [sourceLoading, setSourceLoading] = useState(false)
   const [highlightLoading, setHighlightLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -242,11 +263,12 @@ function App() {
   const [summaryText, setSummaryText] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [isEvidenceBadgeVisible, setIsEvidenceBadgeVisible] = useState(false)
-  const [selectedSourceKey, setSelectedSourceKey] = useState('')
   const [sources, setSources] = useState<SourceItem[]>([])
   const [highlightDoc, setHighlightDoc] = useState<HighlightResponse | null>(null)
   const [fileContentMap, setFileContentMap] = useState<Map<number, string>>(new Map())
   const [activeFileId, setActiveFileId] = useState<number | null>(null)
+  const [conflictPreviewMap, setConflictPreviewMap] = useState<Record<number, ConflictPreview>>({})
+  const [conflictPanelHeight, setConflictPanelHeight] = useState(260)
   const historyCanvases = [
     { id: 'chart-4', name: 'Chart4', date: '2026/2/26' },
     { id: 'chart-3', name: 'Chart3', date: '2026/2/26' },
@@ -280,7 +302,6 @@ function App() {
 
   const handleLoadFileContent = async (fileId: number) => {
     setActiveFileId(fileId)
-    setSelectedSourceKey('')
     // If already cached, show immediately
     const cached = fileContentMap.get(fileId)
     if (cached !== undefined) {
@@ -310,7 +331,6 @@ function App() {
   }
 
   const handleFetchHighlight = async (source: SourceItem) => {
-    setSelectedSourceKey(`${source.fileId}-${source.snippet}`)
     setHighlightLoading(true)
 
     try {
@@ -333,15 +353,18 @@ function App() {
     }
   }
 
-  const handleFetchSources = async (targetType: TargetType, targetId: number, label: string) => {
+  const handleFetchSources = async (
+    targetType: TargetType,
+    targetId: number,
+    label: string,
+    preferredSourceIndex = 0
+  ) => {
     setSelectedTargetLabel(label)
-    setSourceLoading(true)
     setSummaryLoading(true)
     setSummaryText('')
     setIsEvidenceBadgeVisible(true)
     setSources([])
     setActiveFileId(null)
-    setSelectedSourceKey('')
     setHighlightDoc(null)
 
     const query = new URLSearchParams({ targetType, targetId: String(targetId) }).toString()
@@ -373,13 +396,13 @@ function App() {
 
       setError('')
       if (list.length > 0) {
-        await handleFetchHighlight(list[0])
+        const targetSource = list[preferredSourceIndex] || list[0]
+        await handleFetchHighlight(targetSource)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch source list')
       setSummaryText('')
     } finally {
-      setSourceLoading(false)
       setSummaryLoading(false)
     }
   }
@@ -414,7 +437,6 @@ function App() {
       setSelectedTargetLabel('')
       setSummaryText('')
       setIsEvidenceBadgeVisible(false)
-      setSelectedSourceKey('')
       setHighlightDoc(null)
       setFileContentMap(new Map())
       setView('result')
@@ -430,10 +452,27 @@ function App() {
     }
   }
 
+  const dynamicCategories = useMemo(() => {
+    if (!graphData) return []
+    return Array.from(new Set(graphData.nodes.map((n) => n.type)))
+  }, [graphData])
+
+  const ECHARTS_PALETTE = [
+    '#5470c6',
+    '#91cc75',
+    '#fac858',
+    '#ee6666',
+    '#73c0de',
+    '#3ba272',
+    '#fc8452',
+    '#9a60b4',
+    '#ea7ccc',
+  ]
+
   const chartOptions = useMemo(() => {
     if (!graphData) return {}
 
-    const categories = Array.from(new Set(graphData.nodes.map((n) => n.type))).map((type) => ({ name: type }))
+    const categories = dynamicCategories.map((type) => ({ name: type }))
     const typeToColor = new Map(
       categories.map((c, index) => [c.name, ['#e8f4ff', '#eaf7ee', '#fff4e8', '#eef2ff'][index % 4]])
     )
@@ -493,8 +532,7 @@ function App() {
         },
       },
       legend: {
-        show: true,
-        top: 10,
+        show: false,
       },
       series: [
         {
@@ -525,7 +563,7 @@ function App() {
         },
       ],
     }
-  }, [graphData]) as EChartsOption
+  }, [dynamicCategories, graphData]) as EChartsOption
 
   const evidenceSourceFiles = useMemo(
     () => Array.from(new Map(sources.map((source) => [source.fileId, source.fileName])).entries())
@@ -634,11 +672,110 @@ function App() {
     )
   }
 
+  const handleConflictAction = async (conflict: GraphConflict, preferredSourceIndex = 0) => {
+    await handleFetchSources(
+      'CONFLICT',
+      conflict.id,
+      `Conflict: ${conflict.description}`,
+      preferredSourceIndex
+    )
+  }
+
+  const handleConflictResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const chartPanel = chartPanelRef.current
+    if (!chartPanel) return
+
+    event.preventDefault()
+
+    const startY = event.clientY
+    const startHeight = conflictPanelHeight
+    const panelRect = chartPanel.getBoundingClientRect()
+    const minHeight = 156
+    const maxHeight = Math.max(minHeight, panelRect.height - 220)
+
+    const nextPointerId = event.pointerId
+    event.currentTarget.setPointerCapture(nextPointerId)
+    document.body.classList.add('is-resizing-conflict-panel')
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaY = startY - moveEvent.clientY
+      const nextHeight = Math.min(maxHeight, Math.max(minHeight, startHeight + deltaY))
+      setConflictPanelHeight(nextHeight)
+    }
+
+    const handlePointerEnd = () => {
+      document.body.classList.remove('is-resizing-conflict-panel')
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerEnd)
+      window.removeEventListener('pointercancel', handlePointerEnd)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerEnd)
+    window.addEventListener('pointercancel', handlePointerEnd)
+  }
+
+  useEffect(() => {
+    if (!graphData?.conflicts.length) {
+      setConflictPreviewMap({})
+      return
+    }
+
+    let isCancelled = false
+
+    setConflictPreviewMap(
+      Object.fromEntries(
+        graphData.conflicts.map((conflict) => [
+          conflict.id,
+          { sources: [], loading: true } satisfies ConflictPreview,
+        ])
+      )
+    )
+
+    void Promise.all(
+      graphData.conflicts.map(async (conflict) => {
+        try {
+          const query = new URLSearchParams({ targetType: 'CONFLICT', targetId: String(conflict.id) }).toString()
+          const payload = await requestApi<unknown>(`/api/source?${query}`, { method: 'GET' })
+          return {
+            id: conflict.id,
+            preview: {
+              sources: normalizeSources(payload),
+              loading: false,
+            } satisfies ConflictPreview,
+          }
+        } catch (e) {
+          return {
+            id: conflict.id,
+            preview: {
+              sources: [],
+              loading: false,
+              error: e instanceof Error ? e.message : 'Failed to load conflict preview',
+            } satisfies ConflictPreview,
+          }
+        }
+      })
+    ).then((previews) => {
+      if (isCancelled) return
+
+      setConflictPreviewMap(
+        Object.fromEntries(previews.map((item) => [item.id, item.preview]))
+      )
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [graphData])
+
   if (view === 'result' && graphData) {
     return (
       <div className="result-view-container">
         <div className="result-top-nav">
-          <div className="result-nav-brand">Evidence Link</div>
+          <div className="result-nav-brand">
+            <span style={{ color: '#0ea5e9', fontWeight: 800 }}>Evidence</span>
+            <span style={{ color: '#3b82f6', marginLeft: '4px', fontWeight: 800 }}>Link</span>
+          </div>
           <div className="history-canvas-nav">
             {historyCanvases.map((canvas) => (
               <div className="history-canvas-item" key={canvas.id}>
@@ -648,9 +785,17 @@ function App() {
                   <span className="canvas-date">{canvas.date}</span>
                 </div>
                 <div className="canvas-actions">
-                  <button type="button" className="canvas-action-btn">Edit</button>
-                  <button type="button" className="canvas-action-btn">Copy</button>
-                  <button type="button" className="canvas-action-btn">Delete</button>
+                  <button type="button" className="canvas-action-btn">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                    Edit
+                  </button>
+                  <button type="button" className="canvas-action-btn">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    Copy
+                  </button>
+                  <button type="button" className="canvas-action-btn canvas-action-btn-icon-only" aria-label="Delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2-2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  </button>
                 </div>
               </div>
             ))}
@@ -661,17 +806,25 @@ function App() {
             </button>
           </div>
           <button className="back-link nav-back-link" onClick={() => setView('upload')} aria-label="Back to upload">
-            <svg width="16" height="16" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 13L1 7M1 7L6 1M1 7H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="#168cff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
         </div>
         <div className="result-main">
-          <div className="chart-panel">
-            <div className="panel-header chart-header">
-              <span className="graph-meta">Graph #{graphData.graphId}</span>
-            </div>
-            <div className="chart-content" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="chart-panel" ref={chartPanelRef}>
+            <div className="chart-content" style={{ padding: 0, overflow: 'hidden', position: 'relative' }}>
+              <div className="chart-overlay-left">
+                <button className="chart-export-btn">Export</button>
+                <div className="chart-legend">
+                  {dynamicCategories.map((type, idx) => (
+                    <div className="legend-item" key={type}>
+                      <span className="legend-dot" style={{ backgroundColor: ECHARTS_PALETTE[idx % ECHARTS_PALETTE.length] }}></span>
+                      {type}
+                    </div>
+                  ))}
+                </div>
+              </div>
               <ReactECharts option={chartOptions} onEvents={chartEvents} style={{ height: '100%', width: '100%' }} />
               {isEvidenceBadgeVisible && selectedTargetLabel && (
                 <div className="evidence-badge">
@@ -686,59 +839,101 @@ function App() {
                       ×
                     </button>
                   </div>
-                  <div className="evidence-badge-copy">
-                    {summaryLoading
-                      ? 'Loading evidence summary...'
-                      : summaryText || 'No evidence summary available.'}
-                  </div>
-                  <div className="evidence-badge-list">
-                    {renderEvidenceBadgeRows()}
+                  <div className="evidence-badge-body">
+                    <div className="evidence-badge-copy">
+                      {summaryLoading
+                        ? 'Loading evidence summary...'
+                        : summaryText || 'No evidence summary available.'}
+                    </div>
+                    <div className="evidence-badge-list">
+                      {renderEvidenceBadgeRows()}
+                    </div>
                   </div>
                 </div>
               )}
             </div>
-            <div className="conflict-panel">
+            <div
+              className="conflict-resizer"
+              role="separator"
+              aria-label="Resize conflict panel"
+              aria-orientation="horizontal"
+              onPointerDown={handleConflictResizeStart}
+            >
+              <span className="conflict-resizer-grip" />
+            </div>
+            <div className="conflict-panel" style={{ height: `${conflictPanelHeight}px` }}>
               <div className="conflict-title">Conflict Detected</div>
               {graphData.conflicts.length === 0 && <div className="conflict-empty">There are no conflicts detected.</div>}
-              {graphData.conflicts.map((conflict) => (
-                <button
-                  key={conflict.id}
-                  className="conflict-item"
-                  onClick={() => void handleFetchSources('CONFLICT', conflict.id, `Conflict: ${conflict.description}`)}
-                >
-                  <span className="conflict-type">{conflict.type}</span>
-                  <span>{conflict.description}</span>
-                </button>
-              ))}
+              {graphData.conflicts.length > 0 && (
+                <div className="conflict-card-row">
+                  {graphData.conflicts.map((conflict) => (
+                    (() => {
+                      const preview = conflictPreviewMap[conflict.id]
+                      const sourcesForCard = preview?.sources.slice(0, 2) ?? []
+                      const isPreviewLoading = preview === undefined || preview.loading
+
+                      return (
+                        <div
+                          key={conflict.id}
+                          className="conflict-card"
+                          onClick={() => void handleConflictAction(conflict)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              void handleConflictAction(conflict)
+                            }
+                          }}
+                        >
+                          <div className="conflict-card-header">
+                            <div className="conflict-card-icon" aria-hidden="true">
+                              <svg width="34" height="30" viewBox="0 0 64 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M28.536 4C30.0756 1.33333 33.9244 1.33334 35.4641 4L61.4449 49C62.9845 51.6667 61.0601 55 57.9808 55H6.01924C2.93995 55 1.01555 51.6667 2.5552 49L28.536 4Z" fill="#Facc15" />
+                                <path d="M32 18V31" stroke="white" strokeWidth="5" strokeLinecap="round" />
+                                <circle cx="32" cy="40" r="3.5" fill="white" />
+                              </svg>
+                            </div>
+                            <div className="conflict-card-meta">
+                              <div className="conflict-card-title">{conflict.description}</div>
+                              <div className="conflict-card-subtitle">
+                                {isPreviewLoading ? 'Loading sources...' : getConflictSubtitle(conflict, preview.sources)}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="conflict-card-body">
+                            {isPreviewLoading && <p>Loading conflict sources...</p>}
+                            {!isPreviewLoading && preview.error && <p>{preview.error}</p>}
+                            {!isPreviewLoading && !preview.error && sourcesForCard.length === 0 && (
+                              <p>No source snippets available.</p>
+                            )}
+                            {!isPreviewLoading && !preview.error && sourcesForCard.map((source, index) => (
+                              <p key={`${conflict.id}-${source.fileId}-${index}`}>
+                                {String.fromCharCode(65 + index)}: {source.snippet}
+                              </p>
+                            ))}
+                          </div>
+                          <div className="conflict-card-actions" onClick={(event) => event.stopPropagation()}>
+                            <button type="button" className="conflict-action-button" onClick={() => void handleConflictAction(conflict, 0)}>
+                              Use A
+                            </button>
+                            <button type="button" className="conflict-action-button" onClick={() => void handleConflictAction(conflict, 1)}>
+                              Use B
+                            </button>
+                            <button type="button" className="conflict-action-button" onClick={() => void handleConflictAction(conflict)}>
+                              Edit
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })()
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div className="doc-panel">
-            <div className="panel-header doc-header">
-              <div className="doc-target">
-                <div className="doc-target-title">Current Source Target</div>
-                <div className="doc-target-value">{selectedTargetLabel || 'Not selected'}</div>
-              </div>
-              <div className="source-count">{sourceLoading ? 'Loading sources...' : `${sources.length} source(s)`}</div>
-            </div>
-            <div className="toolbar-section">
-              <div className="toolbar-title">Sources</div>
-              <div className="source-toolbar">
-                {sources.length > 0
-                  ? sources.map((source) => {
-                      const key = `${source.fileId}-${source.snippet}`
-                      return (
-                        <button
-                          key={key}
-                          className={`source-pill ${selectedSourceKey === key ? 'active' : ''}`}
-                          onClick={() => void handleFetchHighlight(source)}
-                        >
-                          {source.fileName}
-                        </button>
-                      )
-                    })
-                  : <span className="source-empty">No source snippets</span>}
-              </div>
-            </div>
+
             <div className="toolbar-section">
               <div className="toolbar-title">Files</div>
               <div className="source-toolbar">
