@@ -86,8 +86,18 @@ interface HighlightResponse {
 interface TimelineEntry {
   id: string
   date: string
-  title: string
-  description: string
+  text: string
+}
+
+interface GraphTimelineItem {
+  relationId: number
+  date: string
+  text: string
+}
+
+interface GraphTimelineResponse {
+  graphId: number
+  items: GraphTimelineItem[]
 }
 
 interface CopilotMessage {
@@ -328,6 +338,9 @@ function App() {
   const [conflictPanelHeight, setConflictPanelHeight] = useState(260)
   const [documentCardHeight, setDocumentCardHeight] = useState(312)
   const [timelineCardHeight, setTimelineCardHeight] = useState(208)
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineError, setTimelineError] = useState('')
   const [copilotInput, setCopilotInput] = useState('')
   const [isCopilotSubmitting, setIsCopilotSubmitting] = useState(false)
   const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([
@@ -646,60 +659,6 @@ function App() {
     [sources]
   )
 
-  const timelineEntries = useMemo<TimelineEntry[]>(() => {
-    if (!graphData) return []
-
-    const activeFile = uploadedFiles.find((file) => file.fileId === activeFileId)
-    const importedCount = uploadedFiles.length
-    const conflictCount = graphData.conflicts.length
-    const evidenceCount = new Set(sources.map((source) => source.fileId)).size
-
-    const items: TimelineEntry[] = [
-      {
-        id: 'timeline-import',
-        date: '2026/02/26 09:10',
-        title: '导入源文件',
-        description: `已导入 ${importedCount} 份材料，准备生成关系图谱。`,
-      },
-      {
-        id: 'timeline-graph',
-        date: '2026/02/26 09:18',
-        title: '生成首版图谱',
-        description: `梳理出 ${graphData.nodes.length} 个实体与 ${graphData.edges.length} 条关系。`,
-      },
-      {
-        id: 'timeline-conflict',
-        date: '2026/02/26 09:32',
-        title: '冲突标记完成',
-        description: conflictCount > 0
-          ? `检测到 ${conflictCount} 处待仲裁冲突，已同步到下方卡片。`
-          : '当前版本未检测到新增冲突。',
-      },
-    ]
-
-    if (selectedTargetLabel) {
-      items.push({
-        id: 'timeline-evidence',
-        date: '2026/02/26 09:46',
-        title: '证据链已展开',
-        description: evidenceCount > 0
-          ? `${selectedTargetLabel} 已关联 ${evidenceCount} 份来源文件。`
-          : `${selectedTargetLabel} 暂无来源文件。`,
-      })
-    }
-
-    if (activeFile) {
-      items.push({
-        id: 'timeline-preview',
-        date: '2026/02/26 10:04',
-        title: '文件预览更新',
-        description: `右侧预览已切换到《${activeFile.fileName}》。`,
-      })
-    }
-
-    return items
-  }, [activeFileId, graphData, selectedTargetLabel, sources, uploadedFiles])
-
   const chartEvents = {
     click: (params: { dataType?: string; data?: { id?: string; name?: string; value?: string } }) => {
       if (!graphData || !params.dataType) return
@@ -1012,6 +971,53 @@ function App() {
     }
   }, [graphData])
 
+  useEffect(() => {
+    if (!graphData?.graphId) {
+      setTimelineEntries([])
+      setTimelineError('')
+      setTimelineLoading(false)
+      return
+    }
+
+    let isCancelled = false
+    setTimelineLoading(true)
+    setTimelineError('')
+
+    void requestApi<GraphTimelineResponse>(`/api/graph/timeline?graphId=${graphData.graphId}`, {
+      method: 'GET',
+    })
+      .then((data) => {
+        if (isCancelled) return
+
+        const items = (data.items || [])
+          .map((item) => ({
+            id: String(item.relationId),
+            date: item.date,
+            text: item.text,
+          }))
+          .sort((left, right) => left.date.localeCompare(right.date))
+
+        setTimelineEntries(items)
+      })
+      .catch((timelineRequestError) => {
+        if (isCancelled) return
+        setTimelineEntries([])
+        setTimelineError(
+          timelineRequestError instanceof Error
+            ? timelineRequestError.message
+            : 'Failed to load timeline'
+        )
+      })
+      .finally(() => {
+        if (isCancelled) return
+        setTimelineLoading(false)
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [graphData?.graphId])
+
   if (view === 'result' && graphData) {
     return (
       <div className="result-view-container">
@@ -1024,7 +1030,7 @@ function App() {
             {historyCanvases.map((canvas) => (
               <div className="history-canvas-item" key={canvas.id}>
                 <div className="canvas-item-head">
-                  <span className="canvas-star">✦</span>
+                  <img src="/Vector.png" className="canvas-star-icon" alt="star" />
                   <span className="canvas-name">{canvas.name}</span>
                   <span className="canvas-date">{canvas.date}</span>
                 </div>
@@ -1239,6 +1245,11 @@ function App() {
                 <div className="side-card-subtitle">按时间整理的修订记录</div>
               </div>
               <div className="timeline-list">
+                {timelineLoading && <div className="timeline-empty">Loading timeline...</div>}
+                {!timelineLoading && timelineError && <div className="timeline-empty">{timelineError}</div>}
+                {!timelineLoading && !timelineError && timelineEntries.length === 0 && (
+                  <div className="timeline-empty">No timeline records.</div>
+                )}
                 {timelineEntries.map((entry, index) => (
                   <div key={entry.id} className={`timeline-item ${index === timelineEntries.length - 1 ? 'last' : ''}`}>
                     <div className="timeline-rail" aria-hidden="true">
@@ -1247,8 +1258,7 @@ function App() {
                     </div>
                     <div className="timeline-content">
                       <div className="timeline-date">{entry.date}</div>
-                      <div className="timeline-title">{entry.title}</div>
-                      <div className="timeline-description">{entry.description}</div>
+                      <div className="timeline-description">{entry.text}</div>
                     </div>
                   </div>
                 ))}
