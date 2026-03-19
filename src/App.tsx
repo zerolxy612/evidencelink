@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type { EChartsOption } from 'echarts'
 import ReactECharts from 'echarts-for-react'
 import './App.css'
@@ -79,6 +79,20 @@ interface HighlightResponse {
   fileName: string
   content: string
   highlightRanges?: HighlightRange[]
+}
+
+interface TimelineEntry {
+  id: string
+  date: string
+  title: string
+  description: string
+}
+
+interface CopilotMessage {
+  id: string
+  role: 'assistant' | 'user'
+  content: string
+  timestamp: string
 }
 
 type TargetType = 'ENTITY' | 'RELATION' | 'CONFLICT'
@@ -252,6 +266,7 @@ function App() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const chartPanelRef = useRef<HTMLDivElement>(null)
+  const sidePanelRef = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<'upload' | 'result'>('upload')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [highlightLoading, setHighlightLoading] = useState(false)
@@ -269,6 +284,23 @@ function App() {
   const [activeFileId, setActiveFileId] = useState<number | null>(null)
   const [conflictPreviewMap, setConflictPreviewMap] = useState<Record<number, ConflictPreview>>({})
   const [conflictPanelHeight, setConflictPanelHeight] = useState(260)
+  const [documentCardHeight, setDocumentCardHeight] = useState(312)
+  const [timelineCardHeight, setTimelineCardHeight] = useState(208)
+  const [copilotInput, setCopilotInput] = useState('')
+  const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([
+    {
+      id: 'copilot-assistant-1',
+      role: 'assistant',
+      content: 'Copilot 面板 UI 已准备好。后续可接入检索、摘要和仲裁建议能力。',
+      timestamp: '10:02',
+    },
+    {
+      id: 'copilot-assistant-2',
+      role: 'assistant',
+      content: '当前先展示前端交互壳层。你可以输入问题，界面会本地回显一条占位回复。',
+      timestamp: '10:03',
+    },
+  ])
   const historyCanvases = [
     { id: 'chart-4', name: 'Chart4', date: '2026/2/26' },
     { id: 'chart-3', name: 'Chart3', date: '2026/2/26' },
@@ -571,6 +603,60 @@ function App() {
     [sources]
   )
 
+  const timelineEntries = useMemo<TimelineEntry[]>(() => {
+    if (!graphData) return []
+
+    const activeFile = uploadedFiles.find((file) => file.fileId === activeFileId)
+    const importedCount = uploadedFiles.length
+    const conflictCount = graphData.conflicts.length
+    const evidenceCount = new Set(sources.map((source) => source.fileId)).size
+
+    const items: TimelineEntry[] = [
+      {
+        id: 'timeline-import',
+        date: '2026/02/26 09:10',
+        title: '导入源文件',
+        description: `已导入 ${importedCount} 份材料，准备生成关系图谱。`,
+      },
+      {
+        id: 'timeline-graph',
+        date: '2026/02/26 09:18',
+        title: '生成首版图谱',
+        description: `梳理出 ${graphData.nodes.length} 个实体与 ${graphData.edges.length} 条关系。`,
+      },
+      {
+        id: 'timeline-conflict',
+        date: '2026/02/26 09:32',
+        title: '冲突标记完成',
+        description: conflictCount > 0
+          ? `检测到 ${conflictCount} 处待仲裁冲突，已同步到下方卡片。`
+          : '当前版本未检测到新增冲突。',
+      },
+    ]
+
+    if (selectedTargetLabel) {
+      items.push({
+        id: 'timeline-evidence',
+        date: '2026/02/26 09:46',
+        title: '证据链已展开',
+        description: evidenceCount > 0
+          ? `${selectedTargetLabel} 已关联 ${evidenceCount} 份来源文件。`
+          : `${selectedTargetLabel} 暂无来源文件。`,
+      })
+    }
+
+    if (activeFile) {
+      items.push({
+        id: 'timeline-preview',
+        date: '2026/02/26 10:04',
+        title: '文件预览更新',
+        description: `右侧预览已切换到《${activeFile.fileName}》。`,
+      })
+    }
+
+    return items
+  }, [activeFileId, graphData, selectedTargetLabel, sources, uploadedFiles])
+
   const chartEvents = {
     click: (params: { dataType?: string; data?: { id?: string; name?: string; value?: string } }) => {
       if (!graphData || !params.dataType) return
@@ -679,6 +765,92 @@ function App() {
       `Conflict: ${conflict.description}`,
       preferredSourceIndex
     )
+  }
+
+  const handleCopilotSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const message = copilotInput.trim()
+    if (!message) return
+
+    const focusLabel = selectedTargetLabel || highlightDoc?.fileName || '图谱总览'
+
+    setCopilotMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: message,
+        timestamp: '10:12',
+      },
+      {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `已记录你的问题。当前为 UI 占位回复，后续可基于“${focusLabel}”接入模型问答、证据检索和修订建议。`,
+        timestamp: '10:12',
+      },
+    ])
+    setCopilotInput('')
+  }
+
+  const handleSidePanelResizeStart = (
+    target: 'document' | 'timeline',
+    event: ReactPointerEvent<HTMLDivElement>
+  ) => {
+    const sidePanel = sidePanelRef.current
+    if (!sidePanel) return
+
+    event.preventDefault()
+
+    const startY = event.clientY
+    const startDocumentHeight = documentCardHeight
+    const startTimelineHeight = timelineCardHeight
+    const panelRect = sidePanel.getBoundingClientRect()
+    const splitterSpace = 24
+    const minDocumentHeight = 220
+    const minTimelineHeight = 148
+    const minCopilotHeight = 220
+
+    const nextPointerId = event.pointerId
+    event.currentTarget.setPointerCapture(nextPointerId)
+    document.body.classList.add('is-resizing-side-panel')
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaY = moveEvent.clientY - startY
+
+      if (target === 'document') {
+        const maxDocumentHeight = Math.max(
+          minDocumentHeight,
+          panelRect.height - startTimelineHeight - minCopilotHeight - splitterSpace
+        )
+        const nextDocumentHeight = Math.min(
+          maxDocumentHeight,
+          Math.max(minDocumentHeight, startDocumentHeight + deltaY)
+        )
+        setDocumentCardHeight(nextDocumentHeight)
+        return
+      }
+
+      const maxTimelineHeight = Math.max(
+        minTimelineHeight,
+        panelRect.height - startDocumentHeight - minCopilotHeight - splitterSpace
+      )
+      const nextTimelineHeight = Math.min(
+        maxTimelineHeight,
+        Math.max(minTimelineHeight, startTimelineHeight + deltaY)
+      )
+      setTimelineCardHeight(nextTimelineHeight)
+    }
+
+    const handlePointerEnd = () => {
+      document.body.classList.remove('is-resizing-side-panel')
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerEnd)
+      window.removeEventListener('pointercancel', handlePointerEnd)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerEnd)
+    window.addEventListener('pointercancel', handlePointerEnd)
   }
 
   const handleConflictResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -932,33 +1104,123 @@ function App() {
               )}
             </div>
           </div>
-          <div className="doc-panel">
+          <div className="doc-panel" ref={sidePanelRef}>
+            <section className="side-card document-card" style={{ height: `${documentCardHeight}px` }}>
+              <div className="side-card-header">
+                <div className="file-selector-group">
+                  <div className="file-selector-label">Files</div>
+                  <div className="file-selector-chip">
+                    <span className="file-selector-icon" aria-hidden="true">
+                      ⇄
+                    </span>
+                    <span className="file-selector-text">
+                      {highlightDoc?.fileName || uploadedFiles[0]?.fileName || 'Select file'}
+                    </span>
+                    <span className="file-selector-caret" aria-hidden="true">
+                      ▾
+                    </span>
+                  </div>
+                </div>
+                <div className="doc-panel-caption">{uploadedFiles.length} files</div>
+              </div>
+              <div className="toolbar-section side-toolbar">
+                <div className="toolbar-title">File List</div>
+                <div className="source-toolbar">
+                  {uploadedFiles.map((uf) => (
+                    <button
+                      key={uf.fileId}
+                      className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
+                      onClick={() => void handleLoadFileContent(uf.fileId)}
+                    >
+                      {uf.fileName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="doc-content-wrapper compact-doc-content">
+                <div className="doc-paper compact-doc-paper">
+                  <h2 className="doc-title">{highlightDoc?.fileName || 'Document Preview'}</h2>
+                  <div className="doc-meta">
+                    {highlightLoading && <span>Loading text...</span>}
+                    {!highlightLoading && highlightDoc?.content && <span>Preview only</span>}
+                  </div>
+                  <div className="doc-body">
+                    <p>{renderHighlightedContent()}</p>
+                  </div>
+                </div>
+              </div>
+            </section>
 
-            <div className="toolbar-section">
-              <div className="toolbar-title">Files</div>
-              <div className="source-toolbar">
-                {uploadedFiles.map((uf) => (
-                  <button
-                    key={uf.fileId}
-                    className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
-                    onClick={() => void handleLoadFileContent(uf.fileId)}
-                  >
-                    {uf.fileName}
-                  </button>
+            <div
+              className="side-panel-resizer"
+              role="separator"
+              aria-label="Resize file and timeline panels"
+              aria-orientation="horizontal"
+              onPointerDown={(event) => handleSidePanelResizeStart('document', event)}
+            >
+              <span className="side-panel-resizer-grip" />
+            </div>
+
+            <section className="side-card timeline-card" style={{ height: `${timelineCardHeight}px` }}>
+              <div className="side-card-header secondary-card-header">
+                <div className="side-card-title">Timeline</div>
+                <div className="side-card-subtitle">按时间整理的修订记录</div>
+              </div>
+              <div className="timeline-list">
+                {timelineEntries.map((entry, index) => (
+                  <div key={entry.id} className={`timeline-item ${index === timelineEntries.length - 1 ? 'last' : ''}`}>
+                    <div className="timeline-rail" aria-hidden="true">
+                      <span className="timeline-dot" />
+                      {index !== timelineEntries.length - 1 && <span className="timeline-line" />}
+                    </div>
+                    <div className="timeline-content">
+                      <div className="timeline-date">{entry.date}</div>
+                      <div className="timeline-title">{entry.title}</div>
+                      <div className="timeline-description">{entry.description}</div>
+                    </div>
+                  </div>
                 ))}
               </div>
+            </section>
+
+            <div
+              className="side-panel-resizer"
+              role="separator"
+              aria-label="Resize timeline and copilot panels"
+              aria-orientation="horizontal"
+              onPointerDown={(event) => handleSidePanelResizeStart('timeline', event)}
+            >
+              <span className="side-panel-resizer-grip" />
             </div>
-            <div className="doc-content-wrapper">
-              <div className="doc-paper">
-                <h2 className="doc-title">{highlightDoc?.fileName || 'Document Preview'}</h2>
-                <div className="doc-meta">
-                  {highlightLoading && <span>Loading text...</span>}
-                </div>
-                <div className="doc-body">
-                  <p>{renderHighlightedContent()}</p>
-                </div>
+
+            <section className="side-card copilot-card">
+              <div className="side-card-header secondary-card-header">
+                <div className="side-card-title">Copilot</div>
+                <div className="side-card-subtitle">LLM 对话框占位 UI</div>
               </div>
-            </div>
+              <div className="copilot-thread">
+                {copilotMessages.map((message) => (
+                  <div key={message.id} className={`copilot-message ${message.role === 'user' ? 'user' : 'assistant'}`}>
+                    <div className="copilot-avatar">{message.role === 'user' ? 'You' : 'AI'}</div>
+                    <div className="copilot-bubble-wrap">
+                      <div className="copilot-bubble">{message.content}</div>
+                      <div className="copilot-timestamp">{message.timestamp}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <form className="copilot-input-row" onSubmit={handleCopilotSubmit}>
+                <input
+                  className="copilot-input"
+                  value={copilotInput}
+                  onChange={(event) => setCopilotInput(event.target.value)}
+                  placeholder="Ask about the evidence graph..."
+                />
+                <button type="submit" className="copilot-send-btn">
+                  Send
+                </button>
+              </form>
+            </section>
           </div>
         </div>
       </div>
