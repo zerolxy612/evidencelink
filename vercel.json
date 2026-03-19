@@ -1,9 +1,24 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://evidencelink.hkgai.asia/api/:path*"
+      "source": "/api/files/:path*",
+      "destination": "https://evidencelink.hkgai.asia/api/files/:path*"
+    },
+    {
+      "source": "/api/graph/:path*",
+      "destination": "https://evidencelink.hkgai.asia/api/graph/:path*"
+    },
+    {
+      "source": "/api/source",
+      "destination": "https://evidencelink.hkgai.asia/api/source"
+    },
+    {
+      "source": "/api/evidence/:path*",
+      "destination": "https://evidencelink.hkgai.asia/api/evidence/:path*"
+    },
+    {
+      "source": "/api/highlight",
+      "destination": "https://evidencelink.hkgai.asia/api/highlight"
     }
   ]
 }
-

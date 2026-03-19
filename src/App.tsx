@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type { EChartsOption } from 'echarts'
 import ReactECharts from 'echarts-for-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 interface UploadedFile {
@@ -99,6 +101,46 @@ type TargetType = 'ENTITY' | 'RELATION' | 'CONFLICT'
 type UnknownRecord = Record<string, unknown>
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
+function createTimestamp() {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date())
+}
+
+async function askGemini(message: string): Promise<string> {
+  const response = await fetch(toApiUrl('/api/chat'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message }),
+  })
+
+  const raw = await response.text()
+  let payload: { message?: string; error?: string } = {}
+
+  if (raw) {
+    try {
+      payload = JSON.parse(raw) as { message?: string; error?: string }
+    } catch {
+      throw new Error(raw)
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || `HTTP ${response.status}`)
+  }
+
+  const text = payload.message?.trim()
+  if (!text) {
+    throw new Error('Chat API returned an empty response')
+  }
+
+  return text
+}
 
 function toApiUrl(path: string): string {
   if (!API_BASE) return path
@@ -287,18 +329,19 @@ function App() {
   const [documentCardHeight, setDocumentCardHeight] = useState(312)
   const [timelineCardHeight, setTimelineCardHeight] = useState(208)
   const [copilotInput, setCopilotInput] = useState('')
+  const [isCopilotSubmitting, setIsCopilotSubmitting] = useState(false)
   const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([
     {
       id: 'copilot-assistant-1',
       role: 'assistant',
-      content: 'Copilot 面板 UI 已准备好。后续可接入检索、摘要和仲裁建议能力。',
-      timestamp: '10:02',
+      content: 'Copilot 已切到服务端代理模式。部署到 Vercel 后请配置 `GEMINI_API_KEY`。',
+      timestamp: createTimestamp(),
     },
     {
       id: 'copilot-assistant-2',
       role: 'assistant',
-      content: '当前先展示前端交互壳层。你可以输入问题，界面会本地回显一条占位回复。',
-      timestamp: '10:03',
+      content: '本地调试请使用 `vercel dev`，这样 `/api/chat` 和前端页面会一起工作。',
+      timestamp: createTimestamp(),
     },
   ])
   const historyCanvases = [
@@ -767,29 +810,58 @@ function App() {
     )
   }
 
-  const handleCopilotSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleCopilotSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const message = copilotInput.trim()
-    if (!message) return
+    if (!message || isCopilotSubmitting) return
 
-    const focusLabel = selectedTargetLabel || highlightDoc?.fileName || '图谱总览'
-
+    const userTimestamp = createTimestamp()
     setCopilotMessages((prev) => [
       ...prev,
       {
         id: crypto.randomUUID(),
         role: 'user',
         content: message,
-        timestamp: '10:12',
-      },
-      {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `已记录你的问题。当前为 UI 占位回复，后续可基于“${focusLabel}”接入模型问答、证据检索和修订建议。`,
-        timestamp: '10:12',
+        timestamp: userTimestamp,
       },
     ])
     setCopilotInput('')
+
+    const focusLabel = selectedTargetLabel || highlightDoc?.fileName || '图谱总览'
+    const prompt = [
+      '你是 Evidence Link 的 Copilot。',
+      '请基于当前工作上下文回答用户。',
+      `当前焦点: ${focusLabel}`,
+      '',
+      `用户问题: ${message}`,
+    ].join('\n')
+
+    setIsCopilotSubmitting(true)
+
+    try {
+      const reply = await askGemini(prompt)
+      setCopilotMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: reply,
+          timestamp: createTimestamp(),
+        },
+      ])
+    } catch (requestError) {
+      setCopilotMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: requestError instanceof Error ? requestError.message : 'Gemini request failed',
+          timestamp: createTimestamp(),
+        },
+      ])
+    } finally {
+      setIsCopilotSubmitting(false)
+    }
   }
 
   const handleSidePanelResizeStart = (
@@ -1203,7 +1275,15 @@ function App() {
                   <div key={message.id} className={`copilot-message ${message.role === 'user' ? 'user' : 'assistant'}`}>
                     <div className="copilot-avatar">{message.role === 'user' ? 'You' : 'AI'}</div>
                     <div className="copilot-bubble-wrap">
-                      <div className="copilot-bubble">{message.content}</div>
+                      <div className="copilot-bubble">
+                        {message.role === 'assistant' ? (
+                          <div className="copilot-markdown">
+                            <MarkdownMessage content={message.content} />
+                          </div>
+                        ) : (
+                          message.content
+                        )}
+                      </div>
                       <div className="copilot-timestamp">{message.timestamp}</div>
                     </div>
                   </div>
@@ -1214,10 +1294,11 @@ function App() {
                   className="copilot-input"
                   value={copilotInput}
                   onChange={(event) => setCopilotInput(event.target.value)}
+                  disabled={isCopilotSubmitting}
                   placeholder="Ask about the evidence graph..."
                 />
-                <button type="submit" className="copilot-send-btn">
-                  Send
+                <button type="submit" className="copilot-send-btn" disabled={isCopilotSubmitting || !copilotInput.trim()}>
+                  {isCopilotSubmitting ? 'Sending...' : 'Send'}
                 </button>
               </form>
             </section>
@@ -1313,6 +1394,14 @@ function SparkleIcon() {
       <path d="M7.99992 1.33331L8.94966 5.86178L13.3333 6.66665L8.94966 7.47151L7.99992 12L7.05018 7.47151L2.6665 6.66665L7.05018 5.86178L7.99992 1.33331Z" fill="#168CFF" />
       <path d="M12.6666 10.6666L13.1414 12.9309L15.3333 13.3333L13.1414 13.7357L12.6666 16L12.1917 13.7357L9.99984 13.3333L12.1917 12.9309L12.6666 10.6666Z" fill="#168CFF" />
     </svg>
+  )
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+      {content}
+    </ReactMarkdown>
   )
 }
 

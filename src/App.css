@@ -1163,6 +1163,85 @@ body.is-resizing-side-panel {
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
 }
 
+.copilot-markdown > :first-child {
+  margin-top: 0;
+}
+
+.copilot-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.copilot-markdown p,
+.copilot-markdown ul,
+.copilot-markdown ol,
+.copilot-markdown pre,
+.copilot-markdown blockquote,
+.copilot-markdown table,
+.copilot-markdown h1,
+.copilot-markdown h2,
+.copilot-markdown h3,
+.copilot-markdown h4 {
+  margin: 0 0 10px;
+}
+
+.copilot-markdown ul,
+.copilot-markdown ol {
+  padding-left: 18px;
+}
+
+.copilot-markdown li + li {
+  margin-top: 4px;
+}
+
+.copilot-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+
+.copilot-markdown pre {
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.copilot-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.copilot-markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid rgba(22, 140, 255, 0.35);
+  color: #516072;
+}
+
+.copilot-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.copilot-markdown th,
+.copilot-markdown td {
+  border: 1px solid #d7e2f0;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.copilot-markdown th {
+  background: #f4f8fd;
+}
+
+.copilot-markdown a {
+  color: #1366d6;
+}
+
 .copilot-message.user .copilot-bubble {
   background: linear-gradient(135deg, #168cff 0%, #3b82f6 100%);
   border-color: transparent;
@@ -1217,6 +1296,12 @@ body.is-resizing-side-panel {
 
 .copilot-send-btn:hover {
   filter: brightness(0.98);
+}
+
+.copilot-send-btn:disabled,
+.copilot-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 @media (max-width: 1200px) {
