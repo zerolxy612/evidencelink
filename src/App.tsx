@@ -333,7 +333,7 @@ function App() {
   const [sources, setSources] = useState<SourceItem[]>([])
   const [highlightDoc, setHighlightDoc] = useState<HighlightResponse | null>(null)
   const [fileContentMap, setFileContentMap] = useState<Map<number, string>>(new Map())
-  const [activeFileId, setActiveFileId] = useState<number | null>(null)
+
   const [conflictPreviewMap, setConflictPreviewMap] = useState<Record<number, ConflictPreview>>({})
   const [conflictPanelHeight, setConflictPanelHeight] = useState(260)
   const [documentCardHeight, setDocumentCardHeight] = useState(312)
@@ -343,20 +343,7 @@ function App() {
   const [timelineError, setTimelineError] = useState('')
   const [copilotInput, setCopilotInput] = useState('')
   const [isCopilotSubmitting, setIsCopilotSubmitting] = useState(false)
-  const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([
-    {
-      id: 'copilot-assistant-1',
-      role: 'assistant',
-      content: 'Copilot 已切到服务端代理模式。部署到 Vercel 后请配置 `GEMINI_API_KEY`。',
-      timestamp: createTimestamp(),
-    },
-    {
-      id: 'copilot-assistant-2',
-      role: 'assistant',
-      content: '本地调试请使用 `vercel dev`，这样 `/api/chat` 和前端页面会一起工作。',
-      timestamp: createTimestamp(),
-    },
-  ])
+  const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([])
   const historyCanvases = [
     { id: 'chart-4', name: 'Chart4', date: '2026/2/26' },
     { id: 'chart-3', name: 'Chart3', date: '2026/2/26' },
@@ -389,7 +376,6 @@ function App() {
   const highlightRef = useRef<HTMLElement | null>(null)
 
   const handleLoadFileContent = async (fileId: number) => {
-    setActiveFileId(fileId)
     // If already cached, show immediately
     const cached = fileContentMap.get(fileId)
     if (cached !== undefined) {
@@ -452,7 +438,6 @@ function App() {
     setSummaryText('')
     setIsEvidenceBadgeVisible(true)
     setSources([])
-    setActiveFileId(null)
     setHighlightDoc(null)
 
     const query = new URLSearchParams({ targetType, targetId: String(targetId) }).toString()
@@ -1022,10 +1007,6 @@ function App() {
     return (
       <div className="result-view-container">
         <div className="result-top-nav">
-          <div className="result-nav-brand">
-            <span style={{ color: '#0ea5e9', fontWeight: 800 }}>Evidence</span>
-            <span style={{ color: '#3b82f6', marginLeft: '4px', fontWeight: 800 }}>Link</span>
-          </div>
           <div className="history-canvas-nav">
             {historyCanvases.map((canvas) => (
               <div className="history-canvas-item" key={canvas.id}>
@@ -1060,6 +1041,10 @@ function App() {
               <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="#168cff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+          <div className="result-nav-brand">
+            <span style={{ color: '#0ea5e9', fontWeight: 800 }}>Evidence</span>
+            <span style={{ color: '#3b82f6', marginLeft: '4px', fontWeight: 800 }}>Link</span>
+          </div>
         </div>
         <div className="result-main">
           <div className="chart-panel" ref={chartPanelRef}>
@@ -1201,20 +1186,6 @@ function App() {
                 </div>
                 <div className="doc-panel-caption">{uploadedFiles.length} files</div>
               </div>
-              <div className="toolbar-section side-toolbar">
-                <div className="toolbar-title">File List</div>
-                <div className="source-toolbar">
-                  {uploadedFiles.map((uf) => (
-                    <button
-                      key={uf.fileId}
-                      className={`source-pill ${activeFileId === uf.fileId ? 'active' : ''}`}
-                      onClick={() => void handleLoadFileContent(uf.fileId)}
-                    >
-                      {uf.fileName}
-                    </button>
-                  ))}
-                </div>
-              </div>
               <div className="doc-content-wrapper compact-doc-content">
                 <div className="doc-paper compact-doc-paper">
                   <h2 className="doc-title">{highlightDoc?.fileName || 'Document Preview'}</h2>
@@ -1242,7 +1213,6 @@ function App() {
             <section className="side-card timeline-card" style={{ height: `${timelineCardHeight}px` }}>
               <div className="side-card-header secondary-card-header">
                 <div className="side-card-title">Timeline</div>
-                <div className="side-card-subtitle">按时间整理的修订记录</div>
               </div>
               <div className="timeline-list">
                 {timelineLoading && <div className="timeline-empty">Loading timeline...</div>}
@@ -1278,7 +1248,6 @@ function App() {
             <section className="side-card copilot-card">
               <div className="side-card-header secondary-card-header">
                 <div className="side-card-title">Copilot</div>
-                <div className="side-card-subtitle">LLM 对话框占位 UI</div>
               </div>
               <div className="copilot-thread">
                 {copilotMessages.map((message) => (
