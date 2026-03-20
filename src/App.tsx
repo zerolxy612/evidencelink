@@ -773,11 +773,11 @@ function App() {
 
     const focusLabel = selectedTargetLabel || highlightDoc?.fileName || '图谱总览'
     const prompt = [
-      '你是 Evidence Link 的 Copilot。',
-      '请基于当前工作上下文回答用户。',
-      `当前焦点: ${focusLabel}`,
+      'You are the Copilot for Evidence Link.',
+      'Answer the user based on the current working context.',
+      `Current focus: ${focusLabel}`,
       '',
-      `用户问题: ${message}`,
+      `User question: ${message}`,
     ].join('\n')
 
     setIsCopilotSubmitting(true)
